@@ -1,0 +1,162 @@
+# 尚硅谷2021最新Java版Flink
+
+## 4 Flink运行架构
+### 4.1 Flink运行时的组件
+#### 4.1.1 作业管理器(JobManager)
+* 控制一个应用程序执行的主进程，也就是说，每个应用程序都会被一个不同的JobManager所控制执行。
+* JobManager会先接收到要执行的应用程序，这个应用程序会包括：作业图(JobGraph)、逻辑数据流图(logical dataflow graph)和打包了所有的类、库和其他资源的JAR包。
+* JobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做"执行图(ExecutionGraph)"，包含了所有可以并发执行的任务。
+* JobManager会向资源管理器(ResourceManager)请求执行任务必要的资源，也就是任务管理器(TaskManager)上的插槽(slot)。一旦它获取到了足够的资源，就会将执行图分发到真正运行它们的TaskManager上。而在运行过程中，JobManager会负责所有需要中央协调的操作，比如检查点(checkpoints)的协调。
+
+#### 4.1.2 任务管理器(TaskManager)
+* Flink中的工作进程，通常在Flink中会有多个TaskManager运行，每一个TaskManager都包含了一定数量的插槽(slots)。插槽的数量限制了TaskManager能够执行的任务数量。
+* 启动之后，TaskManager会向资源管理器注册它的插槽；收到资源管理器的指令后，TaskManager就会将一个或者多个插槽提供给JobManager调用。JobManager就可以向插槽分配任务(tasks)来执行了。
+* 在执行过程中，一个TaskManager可以跟其它运行同一应用程序的TaskManager交换数据。
+
+#### 4.1.3 资源管理器(ResourceManager)
+* 主要负责管理任务管理器(TaskManager)的插槽(slot)，TaskManager插槽是Flink中定义的处理资源单元。
+* Flink为不同的环境和资源管理工具提供了不同资源管理器，比如YARN、Mesos、K8s，以及standalone部署。
+* 当JobManager申请插槽资源时，ResourceManager会将有空闲插槽的TaskManager分配给JobManager。如果ResourceManager没有足够的插槽来满足JobManager的请求，它还可以向资源提供平台发起会话，以提供启动TaskManager进程的容器。
+
+#### 4.1.4 分发器(Dispacher)
+* 可以跨作业运行，它为应用提供了REST接口。
+* 当一个应用被提交执行时，分发器就会启动并将应用移交给一个JobManager。
+* Dispacher也会启动一个Web UI，用来方便地展示和监控作业执行的信息。
+* Dispacher在架构中可能并不是必需的，这取决于应用提交运行的方式。
+
+### 4.2 任务提交流程
+#### 4.2.1 作业提交流程
+![-w1131](media/16314299146621/16314497758999.jpg)
+> ps：上图中7.指TaskManager为JobManager提供slots，8.表示JobManager提交要在slots中执行的任务给TaskManager。
+
+上图是从一个较为高层级的视角来看应用中各组件的交互协作。
+如果部署的集群环境不同（例如YARN，Mesos，Kubernetes，standalone等），其中一些步骤可以被省略，或是有些组件会运行在同一个JVM进程中。
+
+#### 4.2.2 Yarn上作业提交流程
+![-w1334](media/16314299146621/16314502380192.jpg)
+
+1. Flink任务提交后，Client向HDFS上传Flink的Jar包和配置。
+2. 之后客户端向Yarn ResourceManager提交任务，ResourceManager分配Container资源并通知对应的NodeManager启动ApplicationMaster。
+3. ApplicationMaster启动后加载Flink的Jar包和配置构建环境，去启动JobManager，之后JobManager向Flink自身的RM进行申请资源，自身的RM向Yarn 的ResourceManager申请资源(因为是yarn模式，所有资源归yarn RM管理)启动TaskManager。
+4. Yarn ResourceManager分配Container资源后，由ApplicationMaster通知资源所在节点的NodeManager启动TaskManager。
+5. NodeManager加载Flink的Jar包和配置构建环境并启动TaskManager，TaskManager启动后向JobManager发送心跳包，并等待JobManager向其分配任务。
+
+
+### 4.3 任务调度原理
+![-w1311](media/16314299146621/16314509948864.jpg)
+
+1、基于代码生成数据流图(Dataflow graph)，通过客户端提交到JobManager上。
+2、JobManager拿到数据流图后分析和处理，生成可执行的数据流图；客户端提交或者取消在JobManager上的job，JobManager返回给客户端一些job的状态信息和返回结果。
+3、当前作业有一个JobManager和多个TaskManager，每个TaskManager有多个Task Slot，JobManager分配的任务都要在Slot上执行。
+4、JobManager分配或者取消job在TaskManager上，同时发送checkpoints指令保存当前状态，TaskManager会向JobManager发送一些状态信息、心跳信息、统计信息等。
+5、slot上的任务执行完毕后向下游去传递，TaskManager之间会有数据流动的过程。
+
+### 4.4 Slot和任务调度
+#### 4.4.1 思考
+1、怎样实现并行计算？ 
+* 不同的任务分配到不同的slot上
+
+2、并行的任务，需要占用多少slot？
+* 累加每个组中的最大并行度
+
+3、一个流处理程序，到底包含多少个任务？
+* 累加每个算子的并行度
+
+#### 4.4.2 并行度(Parallelism)
+![-w945](media/16314299146621/16314528160972.jpg)
+
+* 一个特定算子的子任务(subtask)的个数被称之为其并行度(Parallelism)。
+* 一般情况下，一个stream的并行度，可以认为就是其所有算子中的最大的并行度。
+
+#### 4.4.3 TaskManager和Slots
+![-w966](media/16314299146621/16314528646217.jpg)
+
+* slot是执行一个独立任务，所需要计算资源的最小单元，每个slot都有独享内存，slot之间是隔离的。推荐按照当前TaskManager的CPU核心数量来设置slot。
+* Flink中每一个TaskManager都是一个JVM进程，它可能会在独立的线程上执行一个或多个子任务。
+* 为了控制一个TaskManager能接收多少个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)。
+
+![-w1008](media/16314299146621/16314539442457.jpg)
+
+* 默认情况下，Flink允许子任务共享slot，即使它们是不同任务的子任务。这样的结果是，一个slot可以保存作业的整个管道。
+* Task slot是静态的概念，是指TaskManager具有的并发执行能力。
+
+#### 4.4.4 并行子任务的分配
+![-w1148](media/16314299146621/16314554287263.jpg)
+
+* 一共有16个子任务，需要4个slot完成。
+* 每个任务都是一个线程，不同的任务线程抢占相同的slot资源，因此多个线程可在同一个slot中。
+
+![-w931](media/16314299146621/16314559814917.jpg)
+![-w999](media/16314299146621/16314563559650.jpg)
+
+> 设置合适的并行度才能提高效率，上图例子中应该设置并行度为9。
+> ps：上图最后一个因为是输出到文件，避免多个Slot（多线程）里的算子都输出到同一个文件互相覆盖等混乱问题，直接设置sink的并行度为1。
+
+#### 4.4.5 程序与数据流
+
+![](media/16316020688481/16316028329886.jpg)
+* 所有的Flink程序都是由三部分组成的：Source、Transformance和Sink。
+* Source负责读取数据源，Transformance利用各种算子进行处理加工，Sink负责输出。
+* 在运行时，Flink上运行的程序会被映射成"逻辑数据流(dataflows)"，它包含了这三部分。
+* 每一个dataflow以一个或多个sources开始以一个或者多个sinks结束。dataflow类似于任意的有向无环图(DAG)。
+* 在大部分情况下，程序中的转换运算(transformations)跟dataflow中的算子(operator)是一一对应的关系。
+![-w943](media/16316020688481/16316030239429.jpg)
+
+#### 4.4.6 执行图
+Fink中的执行图可以分为四层：StreamGraph->JobGraph->ExecutionGraph->物理执行图
+* StreamGraph:是根据用户通过Stream API编写的代码生成的最初的图。用来表示程序的拓扑结构。
+* JobGraph:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构。主要的优化为，将多个符合条件的节点chain在一起作为一个节点。
+* ExecutionGraph:JobManager根据JobGraph生成ExecutionGraph。ExecutionGraph是JobGraph的并行化版本，是调度层最核心的数据结构。
+* 物理执行图:JobManager根据ExecutionGraph对Job进行调度后，在各个TaskManager上部署Task后形成的"图"，并不是一个具体的数据结构。
+![-w635](media/16316020688481/16316041052199.jpg)
+
+#### 4.4.7 数据传输形式
+* 一个程序中，不同的算子可能具有不同的并行度。
+* 算子之间传输数据的形式可以是one-to-one(forwarding)的模式也可以是redistributing的模式，具体是哪一种形式，取决于算子的种类。
+* one-to-one:stream维护着分区以及元素的顺序(比如source和map之间)。这意味着map算子的子任务看到的元素的个数以及顺序跟source算子的子任务生成的元素的个数、顺序相同。map、filter、flatMap等算子都是one-to-one的对应关系。类似于spark中的窄依赖。
+* redistributing:stream的分区会发生改变。每一个算子的子任务依据所选择的transformation发送数据到不同的目标任务。例如，keyBy基于hashCode重分区，而broadcast和rebalance会随机重新分区，这些算子都会引起redistribute过程，而redistribute过程就类似于Spark中的shuffle过程。类似于spark中的宽依赖。
+
+#### 4.3.5 任务链
+* Flink采用了一种称为任务链的优化技术，可以在特定条件下减少本地通信的开销。为了满足任务链的要求，必须将两个或多个算子设为相同的并行度，并通过本地转发(localforward)的方式进行连接。
+* 相同并行度的one-to-one操作，Flink这样相连的算子链接在一起形成一个task，原来的算子成为里面的subtask。
+* 并行度相同、并且是one-to-one操作，必须是同一个slot共享组，三个条件缺一不可
+* 如果不想合并成算子，可以采用添加slot共享组(会额外添加slot)、rebalance、disableChaining(跟前后流程都不合并)、startNewChain(流程后不合并)等方法。
+* 不合并算子的好处有哪些？❌
+
+![-w670](media/16316020688481/16316106475793.jpg)
+
+## 5 Flink流处理API
+![-w671](media/16316020688481/16316133469864.jpg)
+
+### 5.1 Environment
+#### 5.1.1 getExecutionEnvironment
+创建一个执行环境，表示当前执行程序的上下文。如果程序是独立调用的，则此方法返回本地执行环境；如果从命令行客户端程序以提交到集群，则此方法返回此集群的执行环境，也就是说，getExecutionEnvironment会根据查询运行的方式决定返回什么样的运行环境，是最常用的一种创建执行环境的方式。
+
+```
+批处理
+ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+```
+
+```
+流处理
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+```
+如果没有设置并行度，会以flink-conf.yaml中的配置为准，默认是1。
+![-w555](media/16316020688481/16316142149239.jpg)
+
+#### 5.1.2 createLocalEnvironment
+返回本地执行环境，需要在调用时指定默认的并行度，如果不设置，则为当前的CPU核心数。
+
+```
+LocalStreamEnvironment env = StreamExecutionEnvironment.createLocalEnvironment(1);
+```
+
+#### 5.1.3 createRemoteEnvironment
+返回集群执行环境，将Jar提交到远程服务器。需要在调用时指定JobManager的IP和端口号，并指定要在集群中运行的Jar包。
+
+```
+StreamExecutionEnvironment env = StreamExecutionEnvironment.createRemoteEnvironment("localhost", 6123, "WordCount.jar");
+```
+
+### 5.2 Source
+#### 5.2.1 从集合中读取数据
