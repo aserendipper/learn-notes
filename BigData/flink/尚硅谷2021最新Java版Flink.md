@@ -160,3 +160,40 @@ StreamExecutionEnvironment env = StreamExecutionEnvironment.createRemoteEnvironm
 
 ### 5.2 Source
 #### 5.2.1 从集合中读取数据
+
+```
+public class SourceTest1_Collection {
+    public static void main(String[] args) throws Exception {
+        //创建执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        //设置全局并行度为1，按顺序输出，因为是两个stream，只能保证单个stream中顺序输出，两个stream会可能交叉输出
+        env.setParallelism(1);
+        //从集合中读取数据
+        DataStream<SensorReading> dataStream = env.fromCollection(Arrays.asList(
+                new SensorReading("sensor_1", 1547718199L, 35.8),
+                new SensorReading("sensor_6", 1547718201L, 15.4),
+                new SensorReading("sensor_7", 1547718202L, 6.7),
+                new SensorReading("sensor_10", 1547718205L, 38.1)
+        ));
+
+        DataStream<Integer> integerDataStream = env.fromElements(1, 2, 4, 67, 189);
+
+        //打印
+        dataStream.print("data");
+        integerDataStream.print("int");
+
+        //执行
+        env.execute();
+    }
+}
+
+@Lombok
+public class SensorReading {
+    /**
+     * 属性：id、时间戳、温度值
+     */
+    private String id;
+    private Long timestamp;
+    private Double temperature;
+}
+```
