@@ -197,3 +197,98 @@ public class SensorReading {
     private Double temperature;
 }
 ```
+#### 5.2.2 从文件中读取数据
+
+```
+public class SourceTest2_File {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> dataStream = env.readTextFile("文件路径");
+        //打印输出
+        dataStream.print();
+        env.execute();
+    }
+}      
+```
+
+#### 5.2.3 从kafka中读取数据
+引入kafka连接器依赖
+
+```
+<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-connector-kafka-0.11_2.12</artifactId>
+			<version>1.10.1</version>
+</dependency>
+```
+具体代码如下：
+```
+public class SourceTest3_Kafka {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //配置kafka连接信息
+        Properties properties = new Properties();
+        properties.setProperty("bootstrap.servers", "localhost:9092");
+        properties.setProperty("group.id", "consumer-group");
+        properties.setProperty("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        properties.setProperty("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        properties.setProperty("auto.offset.reset", "latest");
+        //从kafka读取数据
+        DataStream<String> dataStream = env.addSource(new FlinkKafkaConsumer011<String>("sersor", new SimpleStringSchema(), properties));
+        //输出
+        dataStream.print();
+        //执行
+        env.execute();
+    }
+}
+```
+
+#### 5.2.4 自定义source
+除了以上的source数据源，我们还可以自定义数据源，只需要传入一个sourceFunction就可以了。具体调用如下：
+
+```
+public class SourceTest4_UDF {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从数据源中读取数据
+        DataStream<SensorReading> dataStream = env.addSource(new MySensorSource());
+        //打印输出
+        dataStream.print();
+        env.execute();
+    }
+    /**
+     * 实现自定义的SourceFunction
+     */
+    public static class MySensorSource implements SourceFunction<SensorReading> {
+        //定义一个标识位，用来控制数据的产生
+        private boolean running = true;
+        @Override
+        public void run(SourceContext<SensorReading> ctx) throws Exception {
+            //定义一个随机数发生器
+            Random random = new Random();
+
+            //设置10个传感器的初始温度
+            HashMap<String, Double> sensorTempMap = new HashMap<>();
+            for (int i = 0; i < 10; i++) {
+                sensorTempMap.put("sensor_" + (i + 1), random.nextGaussian() * 20);
+            }
+            while (running) {
+                for (String sensorId : sensorTempMap.keySet()) {
+                    Double newTemp = sensorTempMap.get(sensorId) + random.nextGaussian();
+                    sensorTempMap.put(sensorId, newTemp);
+                    ctx.collect( new SensorReading(sensorId, System.currentTimeMillis(), newTemp));
+                }
+                Thread.sleep(1000L);
+            }
+        }
+        @Override
+        public void cancel() {
+            running = false;
+        }
+    }
+}
+```
