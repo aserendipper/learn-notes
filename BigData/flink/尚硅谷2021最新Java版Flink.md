@@ -292,3 +292,139 @@ public class SourceTest4_UDF {
     }
 }
 ```
+
+### 5.3 Transform
+map、flatMap、filter属于基本(简单)转换算子，不会影响到下游分区的顺序，来一个处理一个，没有其他额外的操作。
+KeyBy、滚动聚合算子、Reduce属于聚合操作，flink中所有的聚合操作都要在keyby分组之后，DataStream中没有聚合方法，只有KeyedStream才有聚合方法。
+Splilt、Select、Connect、CoMap和Union属于多流转换操作。
+#### 5.3.1 map
+![-w595](media/16316020688481/16318440989337.jpg)
+特点：来一个走一个，非常简单。
+
+```
+//1.map，把String转换成长度输出
+DataStream<Integer> mapStream = inputStream.map(new MapFunction<String, Integer>() {
+    @Override
+    public Integer map(String value) throws Exception {
+        return value.length();
+    }
+});
+```
+#### 5.3.2 flatMap
+特点：打散，把数据做一个拆分，来一个数据可以生成多条数据。
+
+```
+//2.flatmap，按逗号分字段
+DataStream<String> flatMapStream = inputStream.flatMap(new FlatMapFunction<String, String>() {
+    @Override
+    public void flatMap(String value, Collector<String> out) throws Exception {
+        String[] fields = value.split(",");
+        for (String field : fields) {
+            out.collect(field);
+        }
+    }
+});
+```
+#### 5.3.3 filter
+![-w587](media/16316020688481/16318440824190.jpg)
+特点：筛选过滤，可能不输出也可能输出。
+
+```
+//3.filter，筛选sensor_1开头的id对应的数据
+DataStream<String> filterStream = inputStream.filter(new FilterFunction<String>() {
+    @Override
+    public boolean filter(String value) throws Exception {
+        return value.startsWith("sensor_1");
+    }
+});
+```
+#### 5.3.4 KeyBy
+![-w582](media/16316020688481/16318467951292.jpg)
+特点：保证相同的key能进到同一分区，但同一分区也会包含其他key。
+DataStream -> KeyedStream：逻辑地将一个流拆分成不同的分区，每个分区包含具有相同的key的元素，在内部以hash的形式实现的。
+#### 5.3.5 滚动聚合算子(Rolling Aggregation)
+这些算子可以针对KeyedStream的每一个支流做聚合。
+* sum() 
+* min() 
+* max() 
+* minBy()
+* maxBy() 
+
+```
+public class TransformTest2_RollingAggregation {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/tmp/demo/frauddetection/src/main/resources/sensor.txt");
+        //转换成SensorReading类型
+//        DataStream<SensorReading> dataStream = inputStream.map(new MapFunction<String, SensorReading>() {
+//            @Override
+//            public SensorReading map(String value) throws Exception {
+//                String[] fields = value.split(",");
+//                return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+//            }
+//        });
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        //分组
+        KeyedStream<SensorReading, Tuple> keyedStream = dataStream.keyBy("id");
+        //KeyedStream<SensorReading, String> keyedStream1 = dataStream.keyBy(SensorReading::getId);
+        //KeyedStream<SensorReading, Tuple> keyedStream2 = dataStream.keyBy(0);
+        //滚动聚合，取当前最大的温度值
+        DataStream<SensorReading> resultStream = keyedStream.minBy("temperature");
+        //打印输出
+        resultStream.print();
+        env.execute();
+    }
+}
+```
+#### 5.3.6 reduce聚合
+KeyedStream -> DataStream：一个分组数据流的聚合操作，合并当前的元素和上次聚合的结果，产生一个新值，返回的流中包含每一次聚合的结果，而不是只返回最后一次聚合的最终结果。
+
+```
+public class TransformTest3_RollingAggregation {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        //分组
+        KeyedStream<SensorReading, Tuple> keyedStream = dataStream.keyBy("id");
+        //reduce聚合，取最大的温度值以及最新时间
+        DataStream<SensorReading> reduceStream = keyedStream.reduce((value1, value2) -> new SensorReading(value1.getId(), value2.getTimestamp(), Math.max(value1.getTemperature(), value2.getTemperature())));
+        reduceStream.print();
+        env.execute();
+    }
+}
+```
+#### 5.3.6 Spilt和Select
+![-w582](media/16316020688481/16318615820987.jpg)
+
+DataStream -> SpiltStream：根据某些特征把一个DataStream拆分成两个或者多个DataStream。
+
+![-w555](media/16316020688481/16318616716795.jpg)
+
+SpiltStream -> DataStream：从一个SpiltStream中获取一个或者多个DataStream。
+需求：传感器数据按照温度高低(以30度为界)，拆分成两个流
+
+```
+SplitStream<SensorReading> splitStream = dataStream.split(new 
+OutputSelector<SensorReading>() {
+    @Override
+    public Iterable<String> select(SensorReading value) {
+        return (value.getTemperature() > 30) ? Collections.singletonList("high") : 
+Collections.singletonList("low");
+}
+});
+DataStream<SensorReading> highTempStream = splitStream.select("high");
+DataStream<SensorReading> lowTempStream = splitStream.select("low");
+DataStream<SensorReading> allTempStream = splitStream.select("high", "low");
+```
+#### 5.3.6 Spilt和Select
