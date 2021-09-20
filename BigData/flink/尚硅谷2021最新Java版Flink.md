@@ -26,14 +26,15 @@
 
 ### 4.2 任务提交流程
 #### 4.2.1 作业提交流程
-![-w1131](media/16314299146621/16314497758999.jpg)
+![Image text](image/1.png)
+
 > ps：上图中7.指TaskManager为JobManager提供slots，8.表示JobManager提交要在slots中执行的任务给TaskManager。
 
 上图是从一个较为高层级的视角来看应用中各组件的交互协作。
 如果部署的集群环境不同（例如YARN，Mesos，Kubernetes，standalone等），其中一些步骤可以被省略，或是有些组件会运行在同一个JVM进程中。
 
 #### 4.2.2 Yarn上作业提交流程
-![-w1334](media/16314299146621/16314502380192.jpg)
+![Image text](image/2.png)
 
 1. Flink任务提交后，Client向HDFS上传Flink的Jar包和配置。
 2. 之后客户端向Yarn ResourceManager提交任务，ResourceManager分配Container资源并通知对应的NodeManager启动ApplicationMaster。
@@ -43,7 +44,7 @@
 
 
 ### 4.3 任务调度原理
-![-w1311](media/16314299146621/16314509948864.jpg)
+![Image text](image/3.png)
 
 1、基于代码生成数据流图(Dataflow graph)，通过客户端提交到JobManager上。
 2、JobManager拿到数据流图后分析和处理，生成可执行的数据流图；客户端提交或者取消在JobManager上的job，JobManager返回给客户端一些job的状态信息和返回结果。
@@ -63,44 +64,44 @@
 * 累加每个算子的并行度
 
 #### 4.4.2 并行度(Parallelism)
-![-w945](media/16314299146621/16314528160972.jpg)
+![Image text](image/4.png)
 
 * 一个特定算子的子任务(subtask)的个数被称之为其并行度(Parallelism)。
 * 一般情况下，一个stream的并行度，可以认为就是其所有算子中的最大的并行度。
 
 #### 4.4.3 TaskManager和Slots
-![-w966](media/16314299146621/16314528646217.jpg)
+![Image text](image/5.png)
 
 * slot是执行一个独立任务，所需要计算资源的最小单元，每个slot都有独享内存，slot之间是隔离的。推荐按照当前TaskManager的CPU核心数量来设置slot。
 * Flink中每一个TaskManager都是一个JVM进程，它可能会在独立的线程上执行一个或多个子任务。
 * 为了控制一个TaskManager能接收多少个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)。
 
-![-w1008](media/16314299146621/16314539442457.jpg)
+![Image text](image/6.png)
 
 * 默认情况下，Flink允许子任务共享slot，即使它们是不同任务的子任务。这样的结果是，一个slot可以保存作业的整个管道。
 * Task slot是静态的概念，是指TaskManager具有的并发执行能力。
 
 #### 4.4.4 并行子任务的分配
-![-w1148](media/16314299146621/16314554287263.jpg)
+![Image text](image/7.png)
 
 * 一共有16个子任务，需要4个slot完成。
 * 每个任务都是一个线程，不同的任务线程抢占相同的slot资源，因此多个线程可在同一个slot中。
 
-![-w931](media/16314299146621/16314559814917.jpg)
-![-w999](media/16314299146621/16314563559650.jpg)
+![Image text](image/8.png)
+![Image text](image/9.png)
 
 > 设置合适的并行度才能提高效率，上图例子中应该设置并行度为9。
 > ps：上图最后一个因为是输出到文件，避免多个Slot（多线程）里的算子都输出到同一个文件互相覆盖等混乱问题，直接设置sink的并行度为1。
 
 #### 4.4.5 程序与数据流
 
-![](media/16316020688481/16316028329886.jpg)
+![Image text](image/10.png)
 * 所有的Flink程序都是由三部分组成的：Source、Transformance和Sink。
 * Source负责读取数据源，Transformance利用各种算子进行处理加工，Sink负责输出。
 * 在运行时，Flink上运行的程序会被映射成"逻辑数据流(dataflows)"，它包含了这三部分。
 * 每一个dataflow以一个或多个sources开始以一个或者多个sinks结束。dataflow类似于任意的有向无环图(DAG)。
 * 在大部分情况下，程序中的转换运算(transformations)跟dataflow中的算子(operator)是一一对应的关系。
-![-w943](media/16316020688481/16316030239429.jpg)
+![Image text](image/11.png)
 
 #### 4.4.6 执行图
 Fink中的执行图可以分为四层：StreamGraph->JobGraph->ExecutionGraph->物理执行图
@@ -108,7 +109,7 @@ Fink中的执行图可以分为四层：StreamGraph->JobGraph->ExecutionGraph->�
 * JobGraph:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构。主要的优化为，将多个符合条件的节点chain在一起作为一个节点。
 * ExecutionGraph:JobManager根据JobGraph生成ExecutionGraph。ExecutionGraph是JobGraph的并行化版本，是调度层最核心的数据结构。
 * 物理执行图:JobManager根据ExecutionGraph对Job进行调度后，在各个TaskManager上部署Task后形成的"图"，并不是一个具体的数据结构。
-![-w635](media/16316020688481/16316041052199.jpg)
+![Image text](image/12.png)
 
 #### 4.4.7 数据传输形式
 * 一个程序中，不同的算子可能具有不同的并行度。
@@ -123,10 +124,10 @@ Fink中的执行图可以分为四层：StreamGraph->JobGraph->ExecutionGraph->�
 * 如果不想合并成算子，可以采用添加slot共享组(会额外添加slot)、rebalance、disableChaining(跟前后流程都不合并)、startNewChain(流程后不合并)等方法。
 * 不合并算子的好处有哪些？❌
 
-![-w670](media/16316020688481/16316106475793.jpg)
+![Image text](image/13.png)
 
 ## 5 Flink流处理API
-![-w671](media/16316020688481/16316133469864.jpg)
+![Image text](image/14.png)
 
 ### 5.1 Environment
 #### 5.1.1 getExecutionEnvironment
@@ -142,7 +143,7 @@ ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 ```
 如果没有设置并行度，会以flink-conf.yaml中的配置为准，默认是1。
-![-w555](media/16316020688481/16316142149239.jpg)
+![Image text](image/15.png)
 
 #### 5.1.2 createLocalEnvironment
 返回本地执行环境，需要在调用时指定默认的并行度，如果不设置，则为当前的CPU核心数。
@@ -298,7 +299,7 @@ map、flatMap、filter属于基本(简单)转换算子，不会影响到下游�
 KeyBy、滚动聚合算子、Reduce属于聚合操作，flink中所有的聚合操作都要在keyby分组之后，DataStream中没有聚合方法，只有KeyedStream才有聚合方法。
 Splilt、Select、Connect、CoMap和Union属于多流转换操作。
 #### 5.3.1 map
-![-w595](media/16316020688481/16318440989337.jpg)
+![Image text](image/16.png)
 特点：来一个走一个，非常简单。
 
 ```
@@ -326,7 +327,7 @@ DataStream<String> flatMapStream = inputStream.flatMap(new FlatMapFunction<Strin
 });
 ```
 #### 5.3.3 filter
-![-w587](media/16316020688481/16318440824190.jpg)
+![Image text](image/17.png)
 特点：筛选过滤，可能不输出也可能输出。
 
 ```
@@ -339,7 +340,7 @@ DataStream<String> filterStream = inputStream.filter(new FilterFunction<String>(
 });
 ```
 #### 5.3.4 KeyBy
-![-w582](media/16316020688481/16318467951292.jpg)
+![Image text](image/18.png)
 特点：保证相同的key能进到同一分区，但同一分区也会包含其他key。
 DataStream -> KeyedStream：逻辑地将一个流拆分成不同的分区，每个分区包含具有相同的key的元素，在内部以hash的形式实现的。
 #### 5.3.5 滚动聚合算子(Rolling Aggregation)
@@ -404,12 +405,12 @@ public class TransformTest3_RollingAggregation {
     }
 }
 ```
-#### 5.3.6 Spilt和Select
-![-w582](media/16316020688481/16318615820987.jpg)
+#### 5.3.7 Spilt和Select
+![Image text](image/19.png)
 
 DataStream -> SpiltStream：根据某些特征把一个DataStream拆分成两个或者多个DataStream。
 
-![-w555](media/16316020688481/16318616716795.jpg)
+![Image text](image/20.png)
 
 SpiltStream -> DataStream：从一个SpiltStream中获取一个或者多个DataStream。
 需求：传感器数据按照温度高低(以30度为界)，拆分成两个流
@@ -427,4 +428,87 @@ DataStream<SensorReading> highTempStream = splitStream.select("high");
 DataStream<SensorReading> lowTempStream = splitStream.select("low");
 DataStream<SensorReading> allTempStream = splitStream.select("high", "low");
 ```
-#### 5.3.6 Spilt和Select
+flink现在已经把SpiltStream删除了，可用process加OutputTag实现。
+
+```
+public class TransformTest4_MultipleStreams {
+    private static final OutputTag<SensorReading> highTempStream = new OutputTag<SensorReading>("high"){};
+    private static final OutputTag<SensorReading> lowTempStream = new OutputTag<SensorReading>("low"){};
+
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        //1.按照温度值30度值为界分为两条
+        SingleOutputStreamOperator<SensorReading> outputStream = dataStream.process(new ProcessFunction<SensorReading, SensorReading>() {
+            @Override
+            public void processElement(SensorReading sensorReading, Context ctx, Collector<SensorReading> out) throws Exception {
+                if (sensorReading.getTemperature() > 30) {
+                    ctx.output(highTempStream, sensorReading);
+                } else {
+                    ctx.output(lowTempStream, sensorReading);
+                }
+            }
+        });
+        outputStream.getSideOutput(highTempStream).print("high");
+        outputStream.getSideOutput(lowTempStream).print("low");
+        env.execute();
+    }
+}
+```
+#### 5.3.8 Connect和CoMap
+![Image text](image/21.png)
+
+DataStream，DataStream -> ConnectedStreams：连接两个保持它们类型的数据流，两个数据流被Connect之后，只是被放在了同一个流中，内部依然保持各自的数据和形式不发生任何变化，两个流相互独立，数据类型可以不一样。
+
+![Image text](image/22.png)
+
+ConnectedStreams -> DataStream：作用于ConnectedStreams上，功能与map和flatMap一样，对ConnectedStreams中的每一个Stream分别进行map和flatMap处理。
+
+
+```
+//2.合流connect，将高温流转换成二元组类型，与低温流连接合并之后，输出状态信息
+SingleOutputStreamOperator<Tuple2<String, Double>> warningStream = outputStream.getSideOutput(highTempStream).map(new MapFunction<SensorReading, Tuple2<String, Double>>() {
+    @Override
+    public Tuple2<String, Double> map(SensorReading sensorReading) throws Exception {
+        return new Tuple2<>(sensorReading.getId(), sensorReading.getTemperature());
+    }
+});
+ConnectedStreams<Tuple2<String, Double>, SensorReading> connectedStreams = warningStream.connect(outputStream.getSideOutput(lowTempStream));
+SingleOutputStreamOperator<Object> resultStream = connectedStreams.map(new CoMapFunction<Tuple2<String, Double>, SensorReading, Object>() {
+    @Override
+    public Object map1(Tuple2<String, Double> value) throws Exception {
+        return new Tuple3<>(value.f0, value.f1, "high temp warning");
+    }
+
+    @Override
+    public Object map2(SensorReading value) throws Exception {
+        return new Tuple2<>(value.getId(), "normal");
+    }
+});
+resultStream.print("result");
+```
+
+#### 5.3.9 Union
+![Image text](image/23.png)
+
+DataStream -> DataStream：对两个及以上的DataSteam进行union操作，产生一个包含所有DataStream元素的新DataStream，前提是这些流的数据类型必须一样。
+
+```
+//3.union联合多条流outputStream.getSideOutput(highTempStream).union(outputStream.getSideOutput(lowTempStream));
+```
+
+Connect与Union区别：
+1.union之前两个流的类型必须是一样的，Connect可以不一样，在之后的coMap中再去调整成为一样的。
+2.Connect只能操作两个流，Union可以操作多个。
+
+总结：所以转换算子的底层都是DataStream。
+
+### 5.4 支持的数据类型
+
+
