@@ -511,4 +511,165 @@ Connect与Union区别：
 
 ### 5.4 支持的数据类型
 
+Flink流应用程序处理的是以数据对象表示的数据流。所以在Flink内部，我们需要能够处理这些对象。它们需要被序列化和反序列化，以便通过网络传送它们；或者从状态后端、检查点和保存点读取它们。为了有效地做到这一点，Flink需要明确知道应用程序所处理的数据类型。Flink使用类型信息的概念来表示数据类型，并为每个数据类型生成特定的序列化器、反序列化器和比较器。
+Flink还具有一个类型提取系统，该系统分析函数的输入和返回类型，以自动获取类型信息，从而获得序列化器和反序列化器。但是，在某些情况下，例如lambda函数或范型类型，需要显式地提供类型信息，才能使应用程序正常工作或提高其性能。
+Flink支持Java和Scala中所有常见数据类型。使用最广泛的类型有以下几种。
+
+#### 5.4.1 基础数据类型
+Flink支持所有的Java和Scala基础数据类型，Int、Double、Long、String、...
+
+```
+DataStream<Integer> numberStream = env.fromElements(1, 2, 3, 4);
+numberStream.map(data -> data * 2);
+```
+#### 5.4.2 Java和Scala元组(Tuples)
+
+```
+DataStream<Tuple2<String, Integer>> personStream = env.fromElements(
+    new Tuple2("Adam", 17),
+    new Tuple2("Sarah", 23) 
+);
+personStream.filter(p -> p.f1 > 18);
+```
+#### 5.4.3 Scala样例类(case classes)
+
+```
+case class Person(name: String, age: Int)
+val persons: DataStream[Person] = env.fromElements(
+    Person("Adam", 17),
+    Person("Sarah", 23) 
+)
+persons.filter(p => p.age > 18)
+```
+#### 5.4.4 Java简单对象(POJOs)
+
+```
+public class Person {
+    public String name;
+    public int age;
+    public Person() {}
+    public Person(String name, int age) { 
+        this.name = name; 
+        this.age = age; 
+    }
+}
+DataStream<Person> persons = env.fromElements( 
+    new Person("Alex", 42), 
+    new Person("Wendy", 23)
+);
+```
+#### 5.4.5 其它（Arrays, Lists, Maps, Enums, 等等）
+Flink 对 Java 和 Scala 中的一些特殊目的的类型也都是支持的，比如 Java 的
+ArrayList，HashMap，Enum 等等。
+
+### 5.5 实现UDF函数--更细粒度的控制流 
+#### 5.5.1 函数类（Function Classes）
+Flink暴露了所有udf函数的接口(实现方式为接口或者抽象类)。例如MapFunction、FilterFunction、ProcessFunction等等。
+下面例子实现了 FilterFunction 接口：
+
+```
+DataStream<String> flinkTweets = tweets.filter(new FlinkFilter());
+public static class FlinkFilter implements FilterFunction<String> {
+    @Override
+    public boolean filter(String value) throws Exception {
+        return value.contains("flink");
+    }
+}
+```
+还可以将函数实现成匿名类。
+
+```
+DataStream<String> flinkTweets = tweets.filter(new FilterFunction<String>() {
+    @Override
+    public boolean filter(String value) throws Exception {
+        return value.contains("flink");
+    }
+});
+```
+filter 的字符串"flink"还可以当作参数传进去。
+
+```
+DataStream<String> tweets = env.readTextFile("INPUT_FILE ");
+DataStream<String> flinkTweets = tweets.filter(new KeyWordFilter("flink"));
+public static class KeyWordFilter implements FilterFunction<String> {
+    private String keyWord;
+    KeyWordFilter(String keyWord) { this.keyWord = keyWord; }
+    @Override
+    public boolean filter(String value) throws Exception {
+    return value.contains(this.keyWord);
+    }
+}
+```
+#### 5.5.2 匿名函数（Lambda Functions）
+
+```
+DataStream<String> tweets = env.readTextFile("INPUT_FILE");
+DataStream<String> flinkTweets = tweets.filter( tweet -> tweet.contains("flink") );
+```
+#### 5.5.3 富函数（Rich Functions）
+“富函数”是DataStream API提供的一个函数类的接口，所有Flink函数类都有其Rich版本。它与常规函数的不同在于，可以获取运行环境的上下文，并拥有一些生命周期方法，所以可以实现更复杂的功能。
+* RichMapFunction
+* RichFlatMapFunction
+* RichFilterFunction
+
+Rich Function 有一个生命周期的概念。典型的生命周期方法有：
+* open()方法是 rich function 的初始化方法，当一个算子例如 map 或者 filter
+被调用之前 open()会被调用。
+* close()方法是生命周期中的最后一个调用的方法，做一些清理工作。
+* getRuntimeContext()方法提供了函数的 RuntimeContext 的一些信息，例如函
+数执行的并行度，任务的名字，以及 state 状态。
+
+```
+public static class MyMapper extends RichMapFunction<SensorReading, Tuple2<String, Integer>> {
+    @Override
+    public Tuple2<String, Integer> map(SensorReading sensorReading) throws Exception {
+        return new Tuple2<>(sensorReading.getId(), getRuntimeContext().getIndexOfThisSubtask());
+    }
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        //初始化工作，一般是定义状态，或者建立数据库连接
+        System.out.println("open");
+    }
+    @Override
+    public void close() throws Exception {
+        //一般是关闭连接和清空状态的收尾操作
+        System.out.println("close");
+    }
+}
+```
+#### 5.5.4 Flink中的数据重分区操作
+
+```
+public class TransformTest6_Parttion {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(4);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        inputStream.print("input");
+        //1.shuffle
+        DataStream<String> shuffleStream = inputStream.shuffle();
+        shuffleStream.print("shuffle");
+        //2.KeyBy
+        dataStream.keyBy("id").print("keyBy");
+        //3.global
+        dataStream.global().print("global");
+        env.execute();
+    }
+}
+```
+### 5.6 Sink
+Flink没有类似于spark中foreach方法，让用户进行迭代的操作。虽有对外的输出操作都要利用Sink完成。最后通过类似如下方式完成最终输出操作。
+
+```
+stream.addSink(new MySink(xxxx))
+```
+官方提供了一部分的框架的 sink。除此以外，需要用户自定义实现 sink。
+
+#### 5.6.1 Kafka
+
 
