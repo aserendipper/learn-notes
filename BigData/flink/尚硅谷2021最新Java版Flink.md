@@ -672,4 +672,117 @@ stream.addSink(new MySink(xxxx))
 
 #### 5.6.1 Kafka
 
+```
+<dependency>
+    <groupId>org.apache.flink</groupId>
+    <artifactId>flink-connector-kafka-0.11_2.12</artifactId>
+    <version>1.10.1</version>
+</dependency>
+```
+
+```
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<String> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2])).toString();
+        });
+        dataStream.addSink(new FlinkKafkaProducer011<String>("localhost:9092", "sinktest", new SimpleStringSchema()));
+        env.execute();
+    }
+```
+#### 5.6.2 Redis
+
+```
+<dependency>
+    <groupId>org.apache.bahir</groupId>
+    <artifactId>flink-connector-redis_2.11</artifactId>
+    <version>1.0</version>
+</dependency>
+```
+
+```
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        //定义jedis连接配置
+        FlinkJedisPoolConfig config = new FlinkJedisPoolConfig.Builder()
+                .setHost("localhost")
+                .setPort(6379)
+                .build();
+        dataStream.addSink(new RedisSink<>(config, new MyRedisMapper()));
+        env.execute();
+    }
+    //自定义mapper
+    public static class MyRedisMapper implements RedisMapper<SensorReading> {
+        //定义保存数据到redis的命令，存成hash表，hset sensor_temp id temperature
+        @Override
+        public RedisCommandDescription getCommandDescription() {
+            return new RedisCommandDescription(RedisCommand.HSET, "sensor_temp");
+        }
+        @Override
+        public String getKeyFromData(SensorReading data) {
+            return data.getId();
+        }
+        @Override
+        public String getValueFromData(SensorReading data) {
+            return data.getTemperature().toString();
+        }
+    }
+```
+#### 5.6.3 Elasticsearch
+
+```
+<dependency>
+    <groupId>org.apache.flink</groupId>
+    <artifactId>flink-connector-elasticsearch6_2.12</artifactId>
+    <version>1.10.1</version>
+</dependency>
+```
+
+```
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+            String[] fields = value.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        //定义es的连接配置
+        ArrayList<HttpHost> httpHosts = new ArrayList<>();
+        httpHosts.add(new HttpHost("localhost", 9200));
+        dataStream.addSink(new ElasticsearchSink.Builder<SensorReading>(httpHosts, new MyEsSinkFunction()).build());
+        env.execute();
+    }
+    //实现自定义的ES写入操作
+    public static class MyEsSinkFunction implements ElasticsearchSinkFunction<SensorReading> {
+        @Override
+        public void process(SensorReading sensorReading, RuntimeContext runtimeContext, RequestIndexer requestIndexer) {
+            //定义写入的数据source
+            HashMap<String, String> dataSource = new HashMap<>();
+            dataSource.put("id", sensorReading.getId());
+            dataSource.put("temp", sensorReading.getTemperature().toString());
+            dataSource.put("ts", sensorReading.getTimestamp().toString());
+            //创建请求，作为向es发起的写入命令
+            IndexRequest indexRequest = Requests.indexRequest()
+                    .index("sensor")
+                    .type("readingData")
+                    .source(dataSource);
+            //用index发起请求
+            requestIndexer.add(indexRequest);
+        }
+    }
+```
+
 
