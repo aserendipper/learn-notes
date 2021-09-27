@@ -784,5 +784,60 @@ stream.addSink(new MySink(xxxx))
         }
     }
 ```
+#### 5.6.4 JDBC自定义sink
+
+```
+<dependency>
+		<groupId>mysql</groupId>
+		<artifactId>mysql-connector-java</artifactId>
+		<version>5.1.44</version>
+</dependency>
+```
+
+```
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        //从文件中读取数据
+//        DataStream<String> inputStream = env.readTextFile("/Users/jingdata-10124/code/flink/demo/frauddetection/src/main/resources/sensor.txt");
+//        DataStream<SensorReading> dataStream = inputStream.map(value -> {
+//            String[] fields = value.split(",");
+//            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+//        });
+        DataStream<SensorReading> dataStream = env.addSource(new SourceTest4_UDF.MySensorSource());
+        dataStream.addSink(new MyJdbcSink());
+        env.execute();
+    }
+    //实现自定义的SinkFunction
+    public static class MyJdbcSink extends RichSinkFunction<SensorReading> {
+        //声明连接和预编译语句
+        Connection connection = null;
+        PreparedStatement insertStat = null;
+        PreparedStatement updateStat = null;
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/test", "user", "password");
+            insertStat = connection.prepareStatement("insert into sensor_temp (id, temp) values (?, ?)");
+            updateStat = connection.prepareStatement("update sensor_temp set temp = ? where id = ?");
+        }
+        @Override
+        public void invoke(SensorReading value, Context context) throws Exception {
+            updateStat.setDouble(1, value.getTemperature());
+            updateStat.setString(2, value.getId());
+            updateStat.execute();
+            if (updateStat.getUpdateCount() == 0) {
+                insertStat.setString(1, value.getId());
+                insertStat.setDouble(2, value.getTemperature());
+                insertStat.execute();
+            }
+        }
+        @Override
+        public void close() throws Exception {
+            insertStat.close();
+            updateStat.close();
+            connection.close();
+        }
+    }
+```
 
 
