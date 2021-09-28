@@ -1,0 +1,16 @@
+一、gmall_aliyun.sql   里面的表结构比普通版的多（订单台账表、时间维度相关表、品牌id表）
+	CALL init_data('2019-10-08',100,30, TRUE) 时，传递4个参数；
+	参数1：数据生成的日期，比如订单日期。
+	参数2：生成的订单数。
+	参数3：生成的用户数。
+	参数4 ：是否清楚之前的订单及用户信息。
+
+
+
+二、gmall_aliyun （5个参数的精简版）.sql 里面有10张表，
+	CALL init_data('2019-10-08',100,30, 30，TRUE)，传递5个参数，
+	参数一：do_date_string生成数据日期
+	参数二：order_incr_num订单id个数
+	参数三：user_incr_num用户id个数
+	参数四：sku_num商品sku个数
+	参数五：if_truncate是否删除数据
