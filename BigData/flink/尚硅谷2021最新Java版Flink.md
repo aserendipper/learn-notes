@@ -839,5 +839,163 @@ stream.addSink(new MySink(xxxx))
         }
     }
 ```
+# 6 Flink 中的Window
+## 6.1 Window
+### 6.1.1 窗口(window)
+![Image text](image/24.png)
+* 一般真实的流都是无界的，怎样处理无界的数据？
+* 可以把无限的数据流进行切分，得到有限的数据集进行处理--也就是得到有界流
+* 窗口（window）就是将无限流切割为有限流的一种方式，它会将流数据分发到有限大小的桶（bucket）中进行分析
+
+### 6.1.2 window类型
+* 时间窗口（Time window）
+    * 滚动时间窗口
+    * 滑动时间窗口
+    * 会话窗口
+* 计数窗口（Count window）
+    * 滚动计数窗口
+    * 滑动计数窗口
+
+滚动窗口（Tumbling Windows）
+![Image text](image/25.png)
+* 将数据依据固定的窗口长度对数据进行切分
+* 时间对其，窗口长度固定，没有重叠
+* 如果有数据在两个窗口中间，可依据窗口规则划分，如[)左闭右开。
+
+滑动窗口（Sliding Windows）
+![Image text](image/26.png)
+* 滑动窗口是固定窗口的更广义的一种形式，滑动窗口由固定的窗口长度和滑动间隔组成
+* 窗口长度固定，可以有重叠
+
+会话窗口（Session Windows）
+![Image text](image/27.png)
+* 由一系列事件组合一个指定时间长度的timeout间隙组成，类似web应用到session，也就是一段时间没有接收到新数据就会生成新的窗口
+* 特点：时间无对齐
+
+## 6.2 Window API
+### 6.2.1	TimeWindow
+TimeWindow是将指定时间范围内的所有数据组成一个window，一次对一个window里面的所有数据进行计算。
+1.滚动窗口（TumblingEventTimeWindows）
+Flink默认的时间窗口根据Processing Time进行窗口的划分，将Flink获取到的数据根据进入Flink的时间划分到不同的窗口中。
+
+```
+DataStream<Tuple2<String, Double>> minTempPerWindowStream = dataStream
+.map(new MapFunction<SensorReading, Tuple2<String, Double>>() {
+        @Override
+        public Tuple2<String, Double> map(SensorReading value) throws
+        Exception {
+            return new Tuple2<>(value.getId(), value.getTemperature());
+        }
+    })
+.keyBy(data -> data.f0)
+.timeWindow(Time.seconds(15))
+.minBy(1);
+```
+时间间隔可以通过Time.millseconds(x),Time.seconds(x),Time.minutes(x)等其中的一个来指定。
+2.滑动窗口
+滑动窗口和滚动窗口的函数名是完全一致的，只是在传参数时需要传入两个参数，一个是window_size，一个是sliding_size。
+下面代码中的sliding_size设置为5s，也就是说，每5s就计算输出结果一次，每一次计算的window范围是15s内的所有元素。
+
+```
+DataStream<SensorReading> minTempPerWindowStream = dataStream
+.keyBy(SensorReading::getId)
+.timeWindow( Time.seconds(15), Time.seconds(5) )
+.minBy("temperature");
+```
+时间间隔可以通过Time.millseconds(x),Time.seconds(x),Time.minutes(x)等其中的一个来指定。
+### 6.2.2	CountWindow
+CountWindow根据窗口中相同key元素的数量来触发执行，执行时只计算元素数量达到窗口大小的key对应的结果。
+注意：CountWindow的window_size指的是相同key的元素的个数，不是输入的所有元素的总数。
+1.滚动窗口
+默认的CountWindow是一个滚动窗口，只需要指定窗口大小即可，当元素数量达到窗口大小时，就会触发窗口的执行。
+
+```
+DataStream<SensorReading> minTempPerWindowStream = dataStream
+.keyBy(SensorReading::getId)
+.countWindow( 5 )
+.minBy("temperature");
+```
+2.滑动窗口
+滑动窗口和滚动窗口的函数名是完全一致的，只是在传参数时需要传入两个参数，一个是 window_size，一个是sliding_size。
+下面代码中的sliding_size设置为2，也就是说，每收到两个相同key的数据就计算一次， 每一次计算的window范围是10个元素。
+
+```
+DataStream<SensorReading> minTempPerWindowStream = dataStream
+.keyBy(SensorReading::getId)
+.countWindow(10, 2)
+.minBy("temperature");
+```
+### 6.2.3	window function
+window function定义了要对窗口中收集的数据做的计算操作。
+可以分为两类
+* 增量聚合函数(incremental aggregation functions)
+    * 每条数据到来就进行计算，保持一个简单的状态
+    * ReduceFunction，AggregateFunction
+* 全窗口函数(full window functions)
+    * 先把窗口所有数据收集起来，等到计算的时候会遍历所有数据
+    * ProcessWindowFunction，WindowFunction
+
+### 6.2.4	其他可选API
+* trigger()--触发器
+    * 定义window什么时候关闭，触发计算并输出结果
+* evictor()--移除器
+    * 定义移除某些数据的逻辑
+* allowedLateness()--允许处理迟到的数据
+* sideOutputLateData()--将迟到的数据放入测输出流
+* getSideOutput()--获取测输出流
+
+![Image text](image/28.png)
+
+# 7 时间语义与watermark
+## 7.1 Flink中的时间语义
+在flink的流式处理中，会涉及到时间的不同概念，如下图所示：
+![Image text](image/29.png)
+
+* Event Time：事件创建的时间
+* Ingestion Time：数据进入Flink的时间
+* Processing Time：执行操作算子的本地系统时间，与机器相关
+
+哪种时间语义更重要
+![Image text](image/30.png)
+* 不同的时间语义有不同的应用场合
+* 我们往往更关心事件时间
+
+## 7.2 EventTime的引入
+在Flink的流式处理中，绝大部分的业务都会使用eventTime，一般只在eventTime无法使用时，才会被迫使用ProcessingTime或者IngestionTime。
+如果要使用EventTime，那么需要引入EventTime的时间属性，引入方式如下所示：
+
+```
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment
+// 从调用时刻开始给 env 创建的每一个 stream 追加时间特征
+env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+```
+## 7.3 watermark
+### 7.3.1 基本概念
+乱序数据的影响
+![Image text](image/31.png)
+* 当flink以Event Time模式处理数据流时，它会根据数据里的时间戳来处理基于时间的算子
+* 由于网络、分布式等原因，会导致乱序数据的产生
+
+水位线（watermark）
+* 怎样避免乱序数据带来计算不正确
+* 遇到一个时间戳达到窗口关闭时间，不应该立刻触发窗口计算，而是等待一段时间，等迟到的数据来了再关闭窗口
+* watermark是一种衡量EventTime进展的机制，可以设定延迟触发
+* watermark是用于处理乱序事件的，而正确的处理乱序事件，通常用watermark机制结合window来实现
+* 数据流中的watermark用于表示timestamp小于watermark的数据，都已经到达了，因此，window的执行也是由watermark触发的
+* watermark用来让程序自己平衡延迟和结果正确性
+
+watermark的特点
+![Image text](image/32.png)
+* watermark是一条特殊的数据记录
+* watermark必须单调递增，以确保任务的事件时间时钟在向前推进，而不是在后退
+* watermark与数据的时间戳相关
+
+watermark的传递
+![Image text](image/33.png)
+
+watermark的设定
+* 在Flink中，watermark由应用程序开发人员生成，这通常需要对相应的领域有一定的了解
+* 如果watermark设置的延迟太久，收到结果的速度可能就会很慢，解决办法是在水位线到达之前输出一个近似结果
+* 而如果watermark到达得太早，则可能收到错误结果，不过Flink处理迟到数据的机制可以解决这个问题
 
 
